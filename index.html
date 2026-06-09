@@ -468,8 +468,10 @@
                     document.body.className = 'state-tracking';
                     
                     isTracking = true;
-                    startTime = Date.now();
-                    clockInterval = setInterval(updateClock, 1000);
+                    if (!startTime) {
+                        startTime = Date.now();
+                        clockInterval = setInterval(updateClock, 1000);
+                    }
                     
                     let displayMat = warpedFrame.clone();
                     cv.circle(displayMat, centerPoint, Math.round(bestBlackRadius), [0, 255, 0, 255], 2); 
@@ -621,28 +623,39 @@
         btnReset.addEventListener('click', () => {
             document.body.className = 'state-setup';
             isTracking = false;
-            if(clockInterval) clearInterval(clockInterval);
             
             btnStart.disabled = false;
             btnStart.textContent = "Start";
-            
-            shots = [];
-            totalScore = 0;
-            scoreBody.innerHTML = '';
-            totalShotsEl.textContent = '0';
-            totalScoreEl.textContent = '0';
-            clockDisplayEl.textContent = '0:00';
             
             let ctx = canvas.getContext('2d');
             ctx.clearRect(0, 0, canvas.width, canvas.height);
         });
         
         btnEnd.addEventListener('click', () => {
-            if(clockInterval) clearInterval(clockInterval);
-            isTracking = false;
-            releaseWakeLock();
-            showAlert("Session Ended", 0);
-            btnTrack.disabled = true;
+            if (confirm("End session and clear all scores?")) {
+                document.body.className = 'state-setup';
+                isTracking = false;
+                if(clockInterval) {
+                    clearInterval(clockInterval);
+                    clockInterval = null;
+                }
+                releaseWakeLock();
+                
+                btnStart.disabled = false;
+                btnStart.textContent = "Start";
+                
+                shots = [];
+                totalScore = 0;
+                scoreBody.innerHTML = '';
+                totalShotsEl.textContent = '0';
+                totalScoreEl.textContent = '0';
+                clockDisplayEl.textContent = '0:00';
+                startTime = null;
+                
+                let ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                hideAlert();
+            }
         });
 
     </script>
