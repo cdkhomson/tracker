@@ -125,14 +125,39 @@
         body:not(.state-summary) #summary-screen { display: none; }
 
         #summary-screen {
-            flex: 1; flex-direction: column; justify-content: center; align-items: center;
-            background: var(--bg-color); padding: 20px; text-align: center;
+            flex: 1; flex-direction: column; background: #AAAAAA; color: white;
             height: 100vh; overflow: hidden;
         }
-        #summary-screen h2 { color: var(--accent); font-size: 32px; margin-bottom: 40px; margin-top: 0; }
-        .summary-stat { margin-bottom: 25px; font-size: 18px; color: #DDD; text-transform: uppercase; letter-spacing: 1px; }
-        .summary-stat span { display: block; font-size: 60px; font-weight: bold; color: white; margin-top: 5px; line-height: 1; }
-        #btn-new-session { margin-top: 30px; padding: 18px 40px; font-size: 18px; max-width: 300px; width: 100%; }
+        .summary-header {
+            display: flex; justify-content: center; align-items: center; position: relative;
+            padding: 15px; font-size: 24px; font-weight: normal;
+        }
+        #btn-home {
+            position: absolute; right: 15px; top: 10px; background: transparent; border: none; 
+            font-size: 32px; padding: 0; margin: 0; cursor: pointer; max-width: none; flex: none;
+        }
+        
+        .summary-table-wrapper {
+            flex: 1; overflow-y: auto; background: #666666;
+        }
+        #summary-table { width: 100%; height: 100%; border-collapse: collapse; text-align: left; }
+        #summary-table th, #summary-table td { 
+            padding: 10px 15px; 
+            border-right: 1px solid white; 
+            width: 33.33%;
+        }
+        #summary-table th:last-child, #summary-table td:last-child { border-right: none; }
+        #summary-table th { background: #000000; color: white; position: sticky; top: 0; font-weight: normal; font-size: 18px; z-index: 2; }
+        #summary-table td { font-size: 18px; vertical-align: top; }
+        .row-set { background: #AAAAAA; color: white; }
+        .row-filler td { height: 100%; }
+        
+        .summary-footer {
+            padding: 15px 0; display: flex; flex-direction: column; gap: 5px; font-size: 20px;
+        }
+        .summary-total-row { display: flex; width: 100%; }
+        .summary-total-row span { width: 33.33%; padding: 0 15px; }
+        .summary-time-row { padding: 0 15px; margin-top: 5px; }
 
         /* Camera Controls */
         #camera-controls {
@@ -165,11 +190,38 @@
 
     <!-- Summary Screen -->
     <div id="summary-screen">
-        <h2>Session Complete</h2>
-        <div class="summary-stat">Total Score<span id="sum-score">0</span></div>
-        <div class="summary-stat">Total Shots<span id="sum-shots">0</span></div>
-        <div class="summary-stat">Time Elapsed<span id="sum-time">0:00</span></div>
-        <button id="btn-new-session">Start New Session</button>
+        <div class="summary-header">
+            <span>Summary</span>
+            <button id="btn-home">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                    <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                </svg>
+            </button>
+        </div>
+        <div class="summary-table-wrapper">
+            <table id="summary-table">
+                <thead>
+                    <tr>
+                        <th>Shot</th>
+                        <th>Time</th>
+                        <th>Score</th>
+                    </tr>
+                </thead>
+                <tbody id="summary-body">
+                </tbody>
+            </table>
+        </div>
+        <div class="summary-footer">
+            <div class="summary-total-row">
+                <span>Total</span>
+                <span id="sum-total-shots">0</span>
+                <span id="sum-total-score">0</span>
+            </div>
+            <div class="summary-time-row">
+                <span>Time spent <span id="sum-time-spent" style="font-weight: bold;">0:00</span></span>
+            </div>
+        </div>
     </div>
 
     <div id="setup-header">
@@ -757,9 +809,44 @@
                 releaseWakeLock();
                 
                 // Populate Summary
-                document.getElementById('sum-score').textContent = totalScore;
-                document.getElementById('sum-shots').textContent = shots.length;
-                document.getElementById('sum-time').textContent = clockDisplayEl.textContent;
+                const summaryBody = document.getElementById('summary-body');
+                summaryBody.innerHTML = '';
+                
+                let setScore = 0;
+                let setNumber = 1;
+                
+                shots.forEach((shot, index) => {
+                    let tr = document.createElement('tr');
+                    tr.innerHTML = `<td>${index + 1}</td><td>${shot.time}</td><td>${shot.score}</td>`;
+                    summaryBody.appendChild(tr);
+                    
+                    setScore += shot.score;
+                    
+                    if ((index + 1) % 10 === 0) {
+                        let setTr = document.createElement('tr');
+                        setTr.className = 'row-set';
+                        setTr.innerHTML = `<td>Set ${setNumber}</td><td>${shot.time}</td><td>${setScore}</td>`;
+                        summaryBody.appendChild(setTr);
+                        setScore = 0;
+                        setNumber++;
+                    }
+                });
+                
+                if (shots.length % 10 !== 0 && shots.length > 0) {
+                     let setTr = document.createElement('tr');
+                     setTr.className = 'row-set';
+                     setTr.innerHTML = `<td>Set ${setNumber}</td><td>${shots[shots.length-1].time}</td><td>${setScore}</td>`;
+                     summaryBody.appendChild(setTr);
+                }
+                
+                let fillerTr = document.createElement('tr');
+                fillerTr.className = 'row-filler';
+                fillerTr.innerHTML = `<td></td><td></td><td></td>`;
+                summaryBody.appendChild(fillerTr);
+
+                document.getElementById('sum-total-shots').textContent = shots.length;
+                document.getElementById('sum-total-score').textContent = totalScore;
+                document.getElementById('sum-time-spent').textContent = clockDisplayEl.textContent;
                 
                 // Switch State
                 document.body.className = 'state-summary';
@@ -770,7 +857,7 @@
             }
         });
 
-        document.getElementById('btn-new-session').addEventListener('click', () => {
+        document.getElementById('btn-home').addEventListener('click', () => {
             document.body.className = 'state-setup';
             
             btnStart.disabled = false;
