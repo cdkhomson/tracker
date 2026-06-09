@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -293,8 +294,21 @@
             detectShot();
         });
 
+        function extractCvError(err) {
+            let msg = String(err);
+            if (err && err.message) msg = err.message;
+            else if (typeof cv !== 'undefined' && cv.exceptionFromPtr) {
+                try { msg = cv.exceptionFromPtr(err).msg; } catch(e){}
+            }
+            return msg;
+        }
+
         function captureBaseline() {
             try {
+                if (video.videoWidth === 0 || video.videoHeight === 0) {
+                    throw new Error("Video frames not ready.");
+                }
+
                 let cap = new cv.VideoCapture(video);
                 let frame = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
                 cap.read(frame);
@@ -327,6 +341,7 @@
                         }
                         approx.delete();
                     }
+                    cnt.delete(); // VERY IMPORTANT: Prevent WASM memory leak
                 }
                 
                 let srcTri;
@@ -344,17 +359,30 @@
                     srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [top[0].x, top[0].y, top[1].x, top[1].y, bottom[0].x, bottom[0].y, bottom[1].x, bottom[1].y]);
                     targetContour.delete();
                 } else {
-                    // Guide fallback
+                    // Guide fallback with proper object-fit:cover mapping
                     const guide = document.getElementById('target-guide');
                     let guideRect = guide.getBoundingClientRect();
                     let videoRect = video.getBoundingClientRect();
-                    let scaleX = video.videoWidth / videoRect.width;
-                    let scaleY = video.videoHeight / videoRect.height;
                     
-                    let gx = (guideRect.left - videoRect.left) * scaleX;
-                    let gy = (guideRect.top - videoRect.top) * scaleY;
-                    let gw = guideRect.width * scaleX;
-                    let gh = guideRect.height * scaleY;
+                    let scale = Math.max(videoRect.width / video.videoWidth, videoRect.height / video.videoHeight);
+                    let renderedWidth = video.videoWidth * scale;
+                    let renderedHeight = video.videoHeight * scale;
+                    let offsetX = (videoRect.width - renderedWidth) / 2;
+                    let offsetY = (videoRect.height - renderedHeight) / 2;
+
+                    let guideCenterX = guideRect.left - videoRect.left + guideRect.width / 2;
+                    let guideCenterY = guideRect.top - videoRect.top + guideRect.height / 2;
+
+                    let streamCenterX = (guideCenterX - offsetX) / scale;
+                    let streamCenterY = (guideCenterY - offsetY) / scale;
+
+                    let streamGuideWidth = guideRect.width / scale;
+                    let streamGuideHeight = guideRect.height / scale;
+
+                    let gx = streamCenterX - streamGuideWidth / 2;
+                    let gy = streamCenterY - streamGuideHeight / 2;
+                    let gw = streamGuideWidth;
+                    let gh = streamGuideHeight;
                     
                     srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [gx, gy, gx+gw, gy, gx+gw, gy+gh, gx, gy+gh]);
                 }
@@ -397,6 +425,7 @@
                                 bestBlackRadius = circle.radius;
                             }
                         }
+                        cnt.delete(); // Prevent WASM memory leak
                     }
                     
                     if (bestBlackRadius > 0) {
@@ -424,7 +453,7 @@
                     
                     binaryBlack.delete(); blackContours.delete(); blackHierarchy.delete(); displayMat.delete();
                 } else {
-                    showAlert("Error Target Rings not detected.\nRe-align and retry.", 3000);
+                    showAlert("Target Rings not detected.\nRe-align and retry.", 3000);
                     btnStart.disabled = false;
                     btnStart.textContent = "Start";
                 }
@@ -433,7 +462,8 @@
                 srcTri.delete(); dstTri.delete(); warpedFrame.delete(); warpedGray.delete(); circles.delete();
             } catch (err) {
                 console.error(err);
-                showAlert("Processing Error.\nTry again.", 3000);
+                let cvErr = extractCvError(err);
+                showAlert("CV Error:\n" + cvErr.substring(0, 50) + "\nPlease retry.", 4000);
                 btnStart.disabled = false;
                 btnStart.textContent = "Start";
             }
@@ -498,6 +528,7 @@
                         cv.line(displayMat, centerPoint, new cv.Point(bulletCenterX, bulletCenterY), [0, 255, 0, 255], 1);
                         
                         warpedGray.copyTo(baselineMat); // Update baseline
+                        cnt.delete();
                         break; 
                     }
                     cnt.delete();
@@ -519,6 +550,8 @@
                 kernel.delete(); contours.delete(); hierarchy.delete(); displayMat.delete(); outFrame.delete();
             } catch(e) {
                 console.error(e);
+                let cvErr = extractCvError(e);
+                showAlert("Tracking Error:\n" + cvErr.substring(0, 50), 3000);
             }
         }
 
