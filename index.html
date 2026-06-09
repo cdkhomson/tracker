@@ -628,8 +628,8 @@
                 if (foundCenter && bestBlackRadius > 0) {
                     centerPoint = new cv.Point(Math.round(foundCenter.x), Math.round(foundCenter.y));
                     
-                    // The black aiming mark (rings 4-10) is precisely 30.5mm diameter
-                    pxPerMm = (bestBlackRadius * 2) / 30.5;
+                    // The black aiming mark (rings 7-10) on an air pistol target is precisely 59.5mm diameter
+                    pxPerMm = (bestBlackRadius * 2) / 59.5;
                     
                     baselineMat = warpedGray.clone();
                     
@@ -644,8 +644,8 @@
                     setTimeout(detectShotLoop, 500);
                     
                     let displayMat = warpedFrame.clone();
-                    cv.circle(displayMat, centerPoint, Math.round(bestBlackRadius), [0, 255, 0, 255], 2); 
-                    cv.circle(displayMat, centerPoint, 2, [255, 0, 0, 255], 3);
+                    cv.circle(displayMat, centerPoint, Math.round(bestBlackRadius), [255, 255, 255, 255], 2); 
+                    cv.circle(displayMat, centerPoint, 3, [255, 255, 255, 255], -1);
                     
                     cv.warpPerspective(displayMat, frame, perspectiveTransform, new cv.Size(video.videoWidth, video.videoHeight), cv.INTER_LINEAR | cv.WARP_INVERSE_MAP);
                     cv.imshow('cv-canvas', frame);
@@ -773,10 +773,7 @@
                             let bulletCenterX = M.m10 / M.m00;
                             let bulletCenterY = M.m01 / M.m00;
                             
-                            let distancePx = Math.hypot(bulletCenterX - centerPoint.x, bulletCenterY - centerPoint.y);
-                            let distanceMm = distancePx / pxPerMm;
-                            
-                            let score = calculateScore(distanceMm);
+                            let score = calculatePistolScore(centerPoint.x, centerPoint.y, bulletCenterX, bulletCenterY, pxPerMm);
                             registerShot(score);
                             shotsPx.push({ x: bulletCenterX, y: bulletCenterY });
                             
@@ -789,10 +786,11 @@
                 }
                 
                 // Draw all historical shots
-                cv.circle(displayMat, centerPoint, 2, [255, 0, 0, 255], 3); // Red center
+                cv.circle(displayMat, centerPoint, 3, [255, 255, 255, 255], -1); // White target center
+                let bulletRadiusPx = Math.round(2.25 * pxPerMm);
                 for (let pt of shotsPx) {
-                    cv.circle(displayMat, new cv.Point(pt.x, pt.y), 4, [0, 255, 0, 255], -1);
-                    cv.line(displayMat, centerPoint, new cv.Point(pt.x, pt.y), [0, 255, 0, 255], 1);
+                    cv.circle(displayMat, new cv.Point(pt.x, pt.y), bulletRadiusPx, [255, 255, 255, 255], 2);
+                    cv.circle(displayMat, new cv.Point(pt.x, pt.y), 1, [255, 255, 255, 255], -1);
                 }
                 
                 let outFrame = new cv.Mat();
@@ -812,17 +810,23 @@
             }
         }
 
-        function calculateScore(distanceMm) {
-            if (distanceMm <= 2.50) return 10;
-            if (distanceMm <= 5.00) return 9;
-            if (distanceMm <= 7.50) return 8;
-            if (distanceMm <= 10.00) return 7;
-            if (distanceMm <= 12.50) return 6;
-            if (distanceMm <= 15.00) return 5;
-            if (distanceMm <= 17.50) return 4;
-            if (distanceMm <= 20.00) return 3;
-            if (distanceMm <= 22.50) return 2;
-            if (distanceMm <= 25.00) return 1;
+        function calculatePistolScore(targetX, targetY, bulletX, bulletY, pixelsPerMm) {
+            let dx = bulletX - targetX;
+            let dy = bulletY - targetY;
+            let pixelDistance = Math.sqrt(dx * dx + dy * dy);
+            let distanceMm = pixelDistance / pixelsPerMm;
+
+            if (distanceMm <= 4.75) return '10X';
+            if (distanceMm <= 8.00) return 10;
+            if (distanceMm <= 16.00) return 9;
+            if (distanceMm <= 24.00) return 8;
+            if (distanceMm <= 32.00) return 7;
+            if (distanceMm <= 40.00) return 6;
+            if (distanceMm <= 48.00) return 5;
+            if (distanceMm <= 56.00) return 4;
+            if (distanceMm <= 64.00) return 3;
+            if (distanceMm <= 72.00) return 2;
+            if (distanceMm <= 80.00) return 1;
             return 0;
         }
 
@@ -833,7 +837,10 @@
             let timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
             
             shots.push({ score, time: timeStr });
-            totalScore += score;
+            
+            let numScore = (score === '10X') ? 10 : parseInt(score);
+            if (isNaN(numScore)) numScore = 0;
+            totalScore += numScore;
             
             let tr = document.createElement('tr');
             tr.innerHTML = `<td>${shots.length}</td><td>${timeStr}</td><td>${score}</td>`;
@@ -879,7 +886,7 @@
                     tr.innerHTML = `<td>${index + 1}</td><td>${shot.time}</td><td>${shot.score}</td>`;
                     summaryBody.appendChild(tr);
                     
-                    setScore += shot.score;
+                    setScore += (shot.score === '10X') ? 10 : parseInt(shot.score);
                     
                     if ((index + 1) % 10 === 0) {
                         let setTr = document.createElement('tr');
