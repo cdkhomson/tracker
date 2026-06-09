@@ -260,9 +260,18 @@
                     video.play();
                     
                     video.onplaying = () => {
-                        streaming = true;
-                        canvas.width = video.videoWidth;
-                        canvas.height = video.videoHeight;
+                        // Allow Safari a moment to correctly populate videoWidth/Height after playing starts
+                        setTimeout(() => {
+                            if (video.videoWidth > 0) {
+                                streaming = true;
+                                // CRITICAL BUGFIX: Bind the DOM element width/height explicitly so OpenCV.js 
+                                // VideoCapture internal canvas matches the frame size, avoiding "bad size" errors.
+                                video.width = video.videoWidth;
+                                video.height = video.videoHeight;
+                                canvas.width = video.videoWidth;
+                                canvas.height = video.videoHeight;
+                            }
+                        }, 100);
                     };
                 })
                 .catch(function(err) {
@@ -280,7 +289,10 @@
         }
 
         btnStart.addEventListener('click', () => {
-            if(!streaming) return;
+            if(!streaming) {
+                showAlert("Camera starting...\nPlease wait.", 2000);
+                return;
+            }
             btnStart.disabled = true;
             btnStart.textContent = "Loading...";
             showAlert("Loading...", 0);
@@ -305,13 +317,21 @@
 
         function captureBaseline() {
             try {
+                // Ensure the video element has hard pixel dimensions so OpenCV's canvas doesn't default to 0x0.
                 if (video.videoWidth === 0 || video.videoHeight === 0) {
                     throw new Error("Video frames not ready.");
                 }
+                video.width = video.videoWidth;
+                video.height = video.videoHeight;
 
                 let cap = new cv.VideoCapture(video);
                 let frame = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
                 cap.read(frame);
+                
+                // If cap.read() failed to populate the frame, width/height might be 0, causing "bad size".
+                if (frame.cols === 0 || frame.rows === 0) {
+                    throw new Error("Failed to read frame.");
+                }
                 
                 let gray = new cv.Mat();
                 cv.cvtColor(frame, gray, cv.COLOR_RGBA2GRAY);
@@ -341,7 +361,7 @@
                         }
                         approx.delete();
                     }
-                    cnt.delete(); // VERY IMPORTANT: Prevent WASM memory leak
+                    cnt.delete();
                 }
                 
                 let srcTri;
@@ -359,7 +379,6 @@
                     srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [top[0].x, top[0].y, top[1].x, top[1].y, bottom[0].x, bottom[0].y, bottom[1].x, bottom[1].y]);
                     targetContour.delete();
                 } else {
-                    // Guide fallback with proper object-fit:cover mapping
                     const guide = document.getElementById('target-guide');
                     let guideRect = guide.getBoundingClientRect();
                     let videoRect = video.getBoundingClientRect();
@@ -396,14 +415,16 @@
                 cv.GaussianBlur(warpedGray, warpedGray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
                 
                 let circles = new cv.Mat();
-                cv.HoughCircles(warpedGray, circles, cv.HOUGH_GRADIENT, 1, warpedHeight / 4, 100, 30, warpedWidth * 0.1, warpedWidth * 0.45);
+                // Enforce Math.round on HoughCircles numeric constraints to avoid "bad size" binding errors
+                cv.HoughCircles(warpedGray, circles, cv.HOUGH_GRADIENT, 1, 
+                    Math.round(warpedHeight / 4), 100, 30, 
+                    Math.round(warpedWidth * 0.1), Math.round(warpedWidth * 0.45));
                 
                 if (circles.cols > 0) {
                     let x = Math.round(circles.data32F[0]);
                     let y = Math.round(circles.data32F[1]);
                     centerPoint = new cv.Point(x, y);
 
-                    // Dynamic Calibration (Black Aiming Mark)
                     let binaryBlack = new cv.Mat();
                     cv.threshold(warpedGray, binaryBlack, 100, 255, cv.THRESH_BINARY_INV);
                     
@@ -425,7 +446,7 @@
                                 bestBlackRadius = circle.radius;
                             }
                         }
-                        cnt.delete(); // Prevent WASM memory leak
+                        cnt.delete(); 
                     }
                     
                     if (bestBlackRadius > 0) {
@@ -436,7 +457,6 @@
                     
                     baselineMat = warpedGray.clone();
                     
-                    // Transition to Tracking State!
                     hideAlert();
                     document.body.className = 'state-tracking';
                     
