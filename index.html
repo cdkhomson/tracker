@@ -414,46 +414,53 @@
                 cv.cvtColor(warpedFrame, warpedGray, cv.COLOR_RGBA2GRAY);
                 cv.GaussianBlur(warpedGray, warpedGray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
                 
-                let circles = new cv.Mat();
-                // Enforce Math.round on HoughCircles numeric constraints to avoid "bad size" binding errors
-                cv.HoughCircles(warpedGray, circles, cv.HOUGH_GRADIENT, 1, 
-                    Math.round(warpedHeight / 4), 100, 30, 
-                    Math.round(warpedWidth * 0.1), Math.round(warpedWidth * 0.45));
+                // Replace HoughCircles with highly robust Otsu's thresholding for the Black Aiming Mark
+                let binaryBlack = new cv.Mat();
+                cv.threshold(warpedGray, binaryBlack, 0, 255, cv.THRESH_BINARY_INV | cv.THRESH_OTSU);
                 
-                if (circles.cols > 0) {
-                    let x = Math.round(circles.data32F[0]);
-                    let y = Math.round(circles.data32F[1]);
-                    centerPoint = new cv.Point(x, y);
-
-                    let binaryBlack = new cv.Mat();
-                    cv.threshold(warpedGray, binaryBlack, 100, 255, cv.THRESH_BINARY_INV);
+                let morphKernel = cv.Mat.ones(5, 5, cv.CV_8U);
+                cv.morphologyEx(binaryBlack, binaryBlack, cv.MORPH_OPEN, morphKernel);
+                
+                let blackContours = new cv.MatVector();
+                let blackHierarchy = new cv.Mat();
+                cv.findContours(binaryBlack, blackContours, blackHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                
+                let bestBlackRadius = 0;
+                let minDistanceToCenter = Infinity;
+                let foundCenter = null;
+                let imgCenterX = warpedWidth / 2;
+                let imgCenterY = warpedHeight / 2;
+                
+                for (let i = 0; i < blackContours.size(); ++i) {
+                    let cnt = blackContours.get(i);
+                    let area = cv.contourArea(cnt);
                     
-                    let blackContours = new cv.MatVector();
-                    let blackHierarchy = new cv.Mat();
-                    cv.findContours(binaryBlack, blackContours, blackHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-                    
-                    let bestBlackRadius = 0;
-                    let minDistanceToCenter = Infinity;
-                    
-                    for (let i = 0; i < blackContours.size(); ++i) {
-                        let cnt = blackContours.get(i);
+                    if (area > 1000) {
                         let circle = cv.minEnclosingCircle(cnt);
-                        let dist = Math.hypot(circle.center.x - x, circle.center.y - y);
+                        let circleArea = Math.PI * circle.radius * circle.radius;
+                        let circularity = area / circleArea;
                         
-                        if (dist < warpedWidth * 0.1 && circle.radius > warpedWidth * 0.05) {
-                            if (dist < minDistanceToCenter) {
-                                minDistanceToCenter = dist;
-                                bestBlackRadius = circle.radius;
+                        // ISSF targets are solid circles, allowing 0.5 for perspective stretch
+                        if (circularity > 0.5) { 
+                            let dist = Math.hypot(circle.center.x - imgCenterX, circle.center.y - imgCenterY);
+                            // Must be inside the guide bracket
+                            if (dist < warpedWidth * 0.4) {
+                                if (dist < minDistanceToCenter) {
+                                    minDistanceToCenter = dist;
+                                    bestBlackRadius = circle.radius;
+                                    foundCenter = circle.center;
+                                }
                             }
                         }
-                        cnt.delete(); 
                     }
+                    cnt.delete();
+                }
+                
+                if (foundCenter && bestBlackRadius > 0) {
+                    centerPoint = new cv.Point(Math.round(foundCenter.x), Math.round(foundCenter.y));
                     
-                    if (bestBlackRadius > 0) {
-                        pxPerMm = (bestBlackRadius * 2) / 30.5;
-                    } else {
-                        pxPerMm = (Math.round(circles.data32F[2]) * 2) / 45.5; 
-                    }
+                    // The black aiming mark (rings 4-10) is precisely 30.5mm diameter
+                    pxPerMm = (bestBlackRadius * 2) / 30.5;
                     
                     baselineMat = warpedGray.clone();
                     
@@ -465,21 +472,23 @@
                     clockInterval = setInterval(updateClock, 1000);
                     
                     let displayMat = warpedFrame.clone();
-                    cv.circle(displayMat, centerPoint, Math.round(bestBlackRadius > 0 ? bestBlackRadius : circles.data32F[2]), [0, 255, 0, 255], 2); 
+                    cv.circle(displayMat, centerPoint, Math.round(bestBlackRadius), [0, 255, 0, 255], 2); 
                     cv.circle(displayMat, centerPoint, 2, [255, 0, 0, 255], 3);
                     
                     cv.warpPerspective(displayMat, frame, perspectiveTransform, new cv.Size(video.videoWidth, video.videoHeight), cv.INTER_LINEAR | cv.WARP_INVERSE_MAP);
                     cv.imshow('cv-canvas', frame);
                     
-                    binaryBlack.delete(); blackContours.delete(); blackHierarchy.delete(); displayMat.delete();
+                    binaryBlack.delete(); morphKernel.delete(); blackContours.delete(); blackHierarchy.delete(); displayMat.delete();
                 } else {
                     showAlert("Target Rings not detected.\nRe-align and retry.", 3000);
                     btnStart.disabled = false;
                     btnStart.textContent = "Start";
+                    
+                    binaryBlack.delete(); morphKernel.delete(); blackContours.delete(); blackHierarchy.delete();
                 }
                 
                 frame.delete(); gray.delete(); thresh.delete(); hierarchy.delete(); contours.delete();
-                srcTri.delete(); dstTri.delete(); warpedFrame.delete(); warpedGray.delete(); circles.delete();
+                srcTri.delete(); dstTri.delete(); warpedFrame.delete(); warpedGray.delete();
             } catch (err) {
                 console.error(err);
                 let cvErr = extractCvError(err);
