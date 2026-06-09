@@ -684,6 +684,56 @@
                 let warpedGray = new cv.Mat();
                 cv.cvtColor(warpedFrame, warpedGray, cv.COLOR_RGBA2GRAY);
                 cv.GaussianBlur(warpedGray, warpedGray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+
+                // --- AUTO-ALIGNMENT TO PREVENT MOVEMENT ARTIFACTS ---
+                let binaryBlack = new cv.Mat();
+                cv.threshold(warpedGray, binaryBlack, 0, 255, cv.THRESH_BINARY_INV | cv.THRESH_OTSU);
+                
+                let morphKernel = cv.Mat.ones(5, 5, cv.CV_8U);
+                cv.morphologyEx(binaryBlack, binaryBlack, cv.MORPH_OPEN, morphKernel);
+                
+                let blackContours = new cv.MatVector();
+                let blackHierarchy = new cv.Mat();
+                cv.findContours(binaryBlack, blackContours, blackHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                
+                let newCenter = null;
+                let minDistanceToCenter = Infinity;
+                let imgCenterX = warpedWidth / 2;
+                let imgCenterY = warpedHeight / 2;
+                
+                for (let i = 0; i < blackContours.size(); ++i) {
+                    let cnt = blackContours.get(i);
+                    let area = cv.contourArea(cnt);
+                    if (area > 1000) {
+                        let circle = cv.minEnclosingCircle(cnt);
+                        let circleArea = Math.PI * circle.radius * circle.radius;
+                        if (area / circleArea > 0.5) {
+                            let dist = Math.hypot(circle.center.x - imgCenterX, circle.center.y - imgCenterY);
+                            if (dist < warpedWidth * 0.4 && dist < minDistanceToCenter) {
+                                minDistanceToCenter = dist;
+                                newCenter = circle.center;
+                            }
+                        }
+                    }
+                    cnt.delete();
+                }
+                
+                if (newCenter) {
+                    let dx = centerPoint.x - newCenter.x;
+                    let dy = centerPoint.y - newCenter.y;
+                    
+                    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+                        let M_translate = cv.matFromArray(2, 3, cv.CV_64F, [1, 0, dx, 0, 1, dy]);
+                        cv.warpAffine(warpedGray, warpedGray, M_translate, warpedGray.size(), cv.INTER_LINEAR, cv.BORDER_REPLICATE, new cv.Scalar());
+                        M_translate.delete();
+                        
+                        let M_translate_color = cv.matFromArray(2, 3, cv.CV_64F, [1, 0, dx, 0, 1, dy]);
+                        cv.warpAffine(warpedFrame, warpedFrame, M_translate_color, warpedFrame.size(), cv.INTER_LINEAR, cv.BORDER_REPLICATE, new cv.Scalar());
+                        M_translate_color.delete();
+                    }
+                }
+                binaryBlack.delete(); morphKernel.delete(); blackContours.delete(); blackHierarchy.delete();
+                // --- END AUTO-ALIGNMENT ---
                 
                 let diff = new cv.Mat();
                 cv.absdiff(warpedGray, baselineMat, diff);
@@ -714,8 +764,11 @@
                         let rect = cv.boundingRect(cnt);
                         let aspectRatio = rect.width / rect.height;
                         
-                        // Roughly square/circular (filters out long crescent shadow shifts)
-                        if (aspectRatio > 0.3 && aspectRatio < 3.0) {
+                        let perimeter = cv.arcLength(cnt, true);
+                        let circularity = (4 * Math.PI * area) / (perimeter * perimeter);
+                        
+                        // A bullet hole is highly circular. A crescent shift is very low circularity (< 0.2).
+                        if (aspectRatio > 0.3 && aspectRatio < 3.0 && circularity > 0.4) {
                             let M = cv.moments(cnt);
                             let bulletCenterX = M.m10 / M.m00;
                             let bulletCenterY = M.m01 / M.m00;
