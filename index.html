@@ -278,7 +278,6 @@
     </div>
     
     <div id="controls-tracking" class="bottom-controls">
-        <button id="btn-track">Track</button>
         <button id="btn-reset">Reset</button>
         <button id="btn-end">End</button>
     </div>
@@ -299,6 +298,7 @@
         let warpedHeight = 600;
 
         let shots = [];
+        let shotsPx = [];
         let totalScore = 0;
         let startTime = null;
         let clockInterval = null;
@@ -307,7 +307,6 @@
 
         // UI Elements
         const btnStart = document.getElementById('btn-start');
-        const btnTrack = document.getElementById('btn-track');
         const btnReset = document.getElementById('btn-reset');
         const btnEnd = document.getElementById('btn-end');
         
@@ -470,9 +469,11 @@
             setTimeout(captureBaseline, 100);
         });
 
-        btnTrack.addEventListener('click', () => {
+        function detectShotLoop() {
+            if (!isTracking) return;
             detectShot();
-        });
+            setTimeout(detectShotLoop, 500);
+        }
 
         function extractCvError(err) {
             let msg = String(err);
@@ -640,6 +641,7 @@
                         startTime = Date.now();
                         clockInterval = setInterval(updateClock, 1000);
                     }
+                    setTimeout(detectShotLoop, 500);
                     
                     let displayMat = warpedFrame.clone();
                     cv.circle(displayMat, centerPoint, Math.round(bestBlackRadius), [0, 255, 0, 255], 2); 
@@ -697,7 +699,6 @@
                 let hierarchy = new cv.Mat();
                 cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
                 
-                let shotDetected = false;
                 let expectedPxDiameter = 4.5 * pxPerMm;
                 let expectedArea = Math.PI * Math.pow(expectedPxDiameter / 2, 2);
                 let minHoleArea = expectedArea * 0.4;
@@ -710,31 +711,35 @@
                     let area = cv.contourArea(cnt);
                     
                     if (area > minHoleArea && area < maxHoleArea) {
-                        shotDetected = true;
+                        let rect = cv.boundingRect(cnt);
+                        let aspectRatio = rect.width / rect.height;
                         
-                        let M = cv.moments(cnt);
-                        let bulletCenterX = M.m10 / M.m00;
-                        let bulletCenterY = M.m01 / M.m00;
-                        
-                        let distancePx = Math.hypot(bulletCenterX - centerPoint.x, bulletCenterY - centerPoint.y);
-                        let distanceMm = distancePx / pxPerMm;
-                        
-                        let score = calculateScore(distanceMm);
-                        registerShot(score);
-                        
-                        cv.drawContours(displayMat, contours, i, [255, 51, 102, 255], 2);
-                        cv.circle(displayMat, new cv.Point(bulletCenterX, bulletCenterY), 3, [0, 255, 0, 255], -1);
-                        cv.line(displayMat, centerPoint, new cv.Point(bulletCenterX, bulletCenterY), [0, 255, 0, 255], 1);
-                        
-                        warpedGray.copyTo(baselineMat); // Update baseline
-                        cnt.delete();
-                        break; 
+                        // Roughly square/circular (filters out long crescent shadow shifts)
+                        if (aspectRatio > 0.3 && aspectRatio < 3.0) {
+                            let M = cv.moments(cnt);
+                            let bulletCenterX = M.m10 / M.m00;
+                            let bulletCenterY = M.m01 / M.m00;
+                            
+                            let distancePx = Math.hypot(bulletCenterX - centerPoint.x, bulletCenterY - centerPoint.y);
+                            let distanceMm = distancePx / pxPerMm;
+                            
+                            let score = calculateScore(distanceMm);
+                            registerShot(score);
+                            shotsPx.push({ x: bulletCenterX, y: bulletCenterY });
+                            
+                            warpedGray.copyTo(baselineMat); // Update baseline
+                            cnt.delete();
+                            break; 
+                        }
                     }
                     cnt.delete();
                 }
                 
-                if(!shotDetected) {
-                   showAlert("No Change\nDetected", 1500);
+                // Draw all historical shots
+                cv.circle(displayMat, centerPoint, 2, [255, 0, 0, 255], 3); // Red center
+                for (let pt of shotsPx) {
+                    cv.circle(displayMat, new cv.Point(pt.x, pt.y), 4, [0, 255, 0, 255], -1);
+                    cv.line(displayMat, centerPoint, new cv.Point(pt.x, pt.y), [0, 255, 0, 255], 1);
                 }
                 
                 let outFrame = new cv.Mat();
@@ -791,6 +796,7 @@
         btnReset.addEventListener('click', () => {
             document.body.className = 'state-setup';
             isTracking = false;
+            shotsPx = [];
             
             btnStart.disabled = false;
             btnStart.textContent = "Start";
@@ -864,6 +870,7 @@
             btnStart.textContent = "Start";
             
             shots = [];
+            shotsPx = [];
             totalScore = 0;
             scoreBody.innerHTML = '';
             totalShotsEl.textContent = '0';
