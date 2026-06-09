@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>HULA Score Tracker</title>
+    <style>
+        :root {
+            --bg-color: #555555;
+            --panel-bg: #666666;
+            --accent: #FF3366; /* Hot pink */
+            --overlay-bg: #FF9900; /* Orange for alerts */
+            --text: #FFFFFF;
+            --table-border: #777777;
+            --guide-color: #FFFFFF;
+        }
+        
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        
+        body { 
+            margin: 0; padding: 0; 
+            background-color: var(--bg-color); 
+            color: var(--text); 
+            display: flex; flex-direction: column; 
+            height: 100vh; overflow: hidden; 
+        }
+
+        /* View States */
+        body.state-loading #loading-screen { display: flex; }
+        body:not(.state-loading) #loading-screen { display: none; }
+        
+        body.state-setup #video-area { flex: 1; }
+        body.state-setup #dashboard-area { display: none; }
+        body.state-setup #controls-tracking { display: none; }
+        body.state-setup #controls-setup { display: flex; }
+        body.state-setup #setup-header { display: block; }
+        body.state-setup #target-guide { display: flex; }
+
+        body.state-tracking #video-area { flex: 0 0 45%; }
+        body.state-tracking #dashboard-area { display: flex; }
+        body.state-tracking #controls-tracking { display: flex; }
+        body.state-tracking #controls-setup { display: none; }
+        body.state-tracking #setup-header { display: none; }
+        body.state-tracking #target-guide { display: none; }
+
+        /* Shared Areas */
+        #video-area { 
+            position: relative; width: 100%; background: #000; overflow: hidden; 
+            display: flex; justify-content: center; align-items: center; 
+            transition: flex 0.3s ease;
+        }
+        
+        #setup-header { 
+            position: absolute; top: 40px; left: 0; width: 100%; text-align: center; z-index: 10; 
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+        }
+        #setup-header h3 { margin: 0 0 5px 0; font-size: 20px; font-weight: 600; }
+        #setup-header p { margin: 0; font-size: 14px; opacity: 0.9; }
+
+        video { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+        canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 2; pointer-events: none; }
+        
+        /* Target Guide Box */
+        #target-guide { 
+            position: absolute; width: 50%; aspect-ratio: 1; z-index: 3; 
+            display: flex; justify-content: center; align-items: center; 
+            pointer-events: none;
+        }
+        /* Corners */
+        #target-guide::before, #target-guide::after, #target-guide-inner::before, #target-guide-inner::after {
+            content: ''; position: absolute; width: 40px; height: 40px; border: 4px solid var(--guide-color);
+        }
+        #target-guide::before { top: 0; left: 0; border-right: none; border-bottom: none; }
+        #target-guide::after { top: 0; right: 0; border-left: none; border-bottom: none; }
+        #target-guide-inner { position: absolute; width: 100%; height: 100%; }
+        #target-guide-inner::before { bottom: 0; left: 0; border-right: none; border-top: none; }
+        #target-guide-inner::after { bottom: 0; right: 0; border-left: none; border-top: none; }
+
+        /* Overlays / Alerts */
+        #center-alert {
+            position: absolute; z-index: 4;
+            background: var(--overlay-bg); color: white; padding: 12px 20px;
+            font-weight: bold; font-size: 16px; text-align: center;
+            border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            max-width: 80%; display: none;
+        }
+        #center-alert.active { display: block; animation: popIn 0.2s ease-out; }
+        @keyframes popIn { 0% { transform: scale(0.9); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+
+        /* Dashboard */
+        #dashboard-area { flex: 1; flex-direction: column; background: var(--panel-bg); overflow: hidden; }
+        .table-wrapper { flex: 1; overflow-y: auto; }
+        table { width: 100%; border-collapse: collapse; text-align: center; font-size: 16px; }
+        th { background: #444; padding: 12px 10px; position: sticky; top: 0; font-weight: normal; color: #DDD; font-size: 14px; border-bottom: 2px solid var(--table-border); z-index: 10; }
+        td { padding: 14px 10px; border-bottom: 1px solid var(--table-border); }
+        tbody tr:nth-child(even) { background-color: rgba(0,0,0,0.05); }
+        
+        .table-footer { 
+            background: #333; padding: 15px; display: flex; justify-content: space-around; 
+            font-weight: normal; font-size: 14px; border-top: 1px solid #222; color: #CCC;
+            text-transform: uppercase;
+        }
+        .table-footer span span { font-weight: bold; color: white; font-size: 16px; display: block; margin-top: 4px; text-align: center;}
+
+        /* Bottom Controls */
+        .bottom-controls { background: var(--bg-color); padding: 20px 15px; display: flex; justify-content: center; gap: 15px; }
+        button { 
+            background: var(--accent); color: white; border: none; padding: 16px; border-radius: 8px; 
+            font-size: 16px; font-weight: bold; cursor: pointer; flex: 1; max-width: 140px;
+            transition: opacity 0.2s;
+        }
+        button:active { opacity: 0.7; }
+        button:disabled { background: #888; cursor: not-allowed; opacity: 1; }
+        #btn-start { max-width: 250px; } 
+
+        /* Loading Screen */
+        #loading-screen { position: fixed; inset: 0; background: var(--bg-color); z-index: 100; display: flex; justify-content: center; align-items: center; flex-direction: column; }
+        .spinner { border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid var(--accent); border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 20px; }
+    </style>
+</head>
+<body class="state-loading">
+
+    <div id="loading-screen">
+        <div class="spinner"></div>
+        <div style="font-weight:bold; font-size: 18px;">Initializing Engine...</div>
+    </div>
+
+    <div id="setup-header">
+        <h3>Real Time Tracking</h3>
+        <p>Align target with guides in frame</p>
+    </div>
+
+    <!-- Top: Video Feed & CV Canvas -->
+    <div id="video-area">
+        <video id="video-feed" autoplay playsinline muted></video>
+        <canvas id="cv-canvas"></canvas>
+        
+        <div id="target-guide">
+            <div id="target-guide-inner"></div>
+        </div>
+        
+        <div id="center-alert"></div>
+    </div>
+
+    <!-- Middle: Dashboard Table -->
+    <div id="dashboard-area">
+        <div class="table-wrapper">
+            <table id="score-table">
+                <thead>
+                    <tr>
+                        <th>Shot</th>
+                        <th>Time</th>
+                        <th>Score</th>
+                    </tr>
+                </thead>
+                <tbody id="score-body">
+                    <!-- Rows dynamically added -->
+                </tbody>
+            </table>
+        </div>
+        <div class="table-footer">
+            <span>Total<br><span id="total-shots">0</span></span>
+            <span>Clock<br><span id="clock-display">0:00</span></span>
+            <span>Score<br><span id="total-score">0</span></span>
+        </div>
+    </div>
+
+    <!-- Bottom: Controls -->
+    <div id="controls-setup" class="bottom-controls">
+        <button id="btn-start">Start</button>
+    </div>
+    
+    <div id="controls-tracking" class="bottom-controls">
+        <button id="btn-track">Track</button>
+        <button id="btn-reset">Reset</button>
+        <button id="btn-end">End</button>
+    </div>
+
+    <!-- Include OpenCV.js -->
+    <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
+
+    <script>
+        let video = document.getElementById('video-feed');
+        let canvas = document.getElementById('cv-canvas');
+        let streaming = false;
+
+        let baselineMat = null;
+        let centerPoint = null;
+        let pxPerMm = null;
+        let perspectiveTransform = null;
+        let warpedWidth = 600; 
+        let warpedHeight = 600;
+
+        let shots = [];
+        let totalScore = 0;
+        let startTime = null;
+        let clockInterval = null;
+        let isTracking = false;
+        let wakeLock = null;
+
+        // UI Elements
+        const btnStart = document.getElementById('btn-start');
+        const btnTrack = document.getElementById('btn-track');
+        const btnReset = document.getElementById('btn-reset');
+        const btnEnd = document.getElementById('btn-end');
+        
+        const scoreBody = document.getElementById('score-body');
+        const totalShotsEl = document.getElementById('total-shots');
+        const totalScoreEl = document.getElementById('total-score');
+        const clockDisplayEl = document.getElementById('clock-display');
+        
+        const centerAlert = document.getElementById('center-alert');
+
+        function showAlert(msg, duration = 2000) {
+            centerAlert.innerHTML = msg.replace(/\n/g, '<br>');
+            centerAlert.classList.add('active');
+            if(duration > 0) {
+                setTimeout(() => { centerAlert.classList.remove('active'); }, duration);
+            }
+        }
+        
+        function hideAlert() {
+            centerAlert.classList.remove('active');
+        }
+
+        async function requestWakeLock() {
+            if ('wakeLock' in navigator) {
+                try {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                } catch (err) {
+                    console.error(`Wake Lock error: ${err.message}`);
+                }
+            }
+        }
+
+        function releaseWakeLock() {
+            if (wakeLock !== null) {
+                wakeLock.release().then(() => { wakeLock = null; });
+            }
+        }
+
+        function onOpenCvReady() {
+            document.body.className = 'state-setup';
+            startCamera();
+        }
+
+        function startCamera() {
+            let constraints = { 
+                video: { 
+                    facingMode: 'environment', 
+                    width: { ideal: 1920 }, 
+                    height: { ideal: 1080 } 
+                }, 
+                audio: false 
+            };
+            navigator.mediaDevices.getUserMedia(constraints)
+                .then(function(stream) {
+                    video.srcObject = stream;
+                    video.play();
+                    
+                    video.onplaying = () => {
+                        streaming = true;
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                    };
+                })
+                .catch(function(err) {
+                    console.error("Camera error:", err);
+                    showAlert("Camera Access Required", 0);
+                });
+        }
+
+        function updateClock() {
+            if(!startTime) return;
+            let elapsedSec = Math.floor((Date.now() - startTime) / 1000);
+            let mins = Math.floor(elapsedSec / 60);
+            let secs = elapsedSec % 60;
+            clockDisplayEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        btnStart.addEventListener('click', () => {
+            if(!streaming) return;
+            btnStart.disabled = true;
+            btnStart.textContent = "Loading...";
+            showAlert("Loading...", 0);
+            requestWakeLock();
+            
+            // Allow UI to paint before blocking thread
+            setTimeout(captureBaseline, 100);
+        });
+
+        btnTrack.addEventListener('click', () => {
+            detectShot();
+        });
+
+        function captureBaseline() {
+            try {
+                let cap = new cv.VideoCapture(video);
+                let frame = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+                cap.read(frame);
+                
+                let gray = new cv.Mat();
+                cv.cvtColor(frame, gray, cv.COLOR_RGBA2GRAY);
+                
+                let thresh = new cv.Mat();
+                cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 15, 5);
+                
+                let contours = new cv.MatVector();
+                let hierarchy = new cv.Mat();
+                cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                
+                let largestArea = 0;
+                let targetContour = null;
+                
+                for (let i = 0; i < contours.size(); ++i) {
+                    let cnt = contours.get(i);
+                    let area = cv.contourArea(cnt);
+                    if (area > video.videoWidth * video.videoHeight * 0.05) {
+                        let approx = new cv.Mat();
+                        let perimeter = cv.arcLength(cnt, true);
+                        cv.approxPolyDP(cnt, approx, 0.05 * perimeter, true);
+                        
+                        if (approx.rows === 4 && area > largestArea) {
+                            largestArea = area;
+                            if(targetContour) targetContour.delete();
+                            targetContour = approx.clone();
+                        }
+                        approx.delete();
+                    }
+                }
+                
+                let srcTri;
+                let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, warpedWidth, 0, warpedWidth, warpedHeight, 0, warpedHeight]);
+                
+                if (targetContour) {
+                    let pts = [];
+                    for(let i=0; i<4; i++) {
+                        pts.push({x: targetContour.data32S[i*2], y: targetContour.data32S[i*2+1]});
+                    }
+                    pts.sort((a,b) => a.y - b.y); 
+                    let top = pts.slice(0, 2).sort((a,b) => a.x - b.x);
+                    let bottom = pts.slice(2, 4).sort((a,b) => b.x - a.x);
+                    
+                    srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [top[0].x, top[0].y, top[1].x, top[1].y, bottom[0].x, bottom[0].y, bottom[1].x, bottom[1].y]);
+                    targetContour.delete();
+                } else {
+                    // Guide fallback
+                    const guide = document.getElementById('target-guide');
+                    let guideRect = guide.getBoundingClientRect();
+                    let videoRect = video.getBoundingClientRect();
+                    let scaleX = video.videoWidth / videoRect.width;
+                    let scaleY = video.videoHeight / videoRect.height;
+                    
+                    let gx = (guideRect.left - videoRect.left) * scaleX;
+                    let gy = (guideRect.top - videoRect.top) * scaleY;
+                    let gw = guideRect.width * scaleX;
+                    let gh = guideRect.height * scaleY;
+                    
+                    srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [gx, gy, gx+gw, gy, gx+gw, gy+gh, gx, gy+gh]);
+                }
+                
+                perspectiveTransform = cv.getPerspectiveTransform(srcTri, dstTri);
+                let warpedFrame = new cv.Mat();
+                cv.warpPerspective(frame, warpedFrame, perspectiveTransform, new cv.Size(warpedWidth, warpedHeight));
+                
+                let warpedGray = new cv.Mat();
+                cv.cvtColor(warpedFrame, warpedGray, cv.COLOR_RGBA2GRAY);
+                cv.GaussianBlur(warpedGray, warpedGray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+                
+                let circles = new cv.Mat();
+                cv.HoughCircles(warpedGray, circles, cv.HOUGH_GRADIENT, 1, warpedHeight / 4, 100, 30, warpedWidth * 0.1, warpedWidth * 0.45);
+                
+                if (circles.cols > 0) {
+                    let x = Math.round(circles.data32F[0]);
+                    let y = Math.round(circles.data32F[1]);
+                    centerPoint = new cv.Point(x, y);
+
+                    // Dynamic Calibration (Black Aiming Mark)
+                    let binaryBlack = new cv.Mat();
+                    cv.threshold(warpedGray, binaryBlack, 100, 255, cv.THRESH_BINARY_INV);
+                    
+                    let blackContours = new cv.MatVector();
+                    let blackHierarchy = new cv.Mat();
+                    cv.findContours(binaryBlack, blackContours, blackHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                    
+                    let bestBlackRadius = 0;
+                    let minDistanceToCenter = Infinity;
+                    
+                    for (let i = 0; i < blackContours.size(); ++i) {
+                        let cnt = blackContours.get(i);
+                        let circle = cv.minEnclosingCircle(cnt);
+                        let dist = Math.hypot(circle.center.x - x, circle.center.y - y);
+                        
+                        if (dist < warpedWidth * 0.1 && circle.radius > warpedWidth * 0.05) {
+                            if (dist < minDistanceToCenter) {
+                                minDistanceToCenter = dist;
+                                bestBlackRadius = circle.radius;
+                            }
+                        }
+                    }
+                    
+                    if (bestBlackRadius > 0) {
+                        pxPerMm = (bestBlackRadius * 2) / 30.5;
+                    } else {
+                        pxPerMm = (Math.round(circles.data32F[2]) * 2) / 45.5; 
+                    }
+                    
+                    baselineMat = warpedGray.clone();
+                    
+                    // Transition to Tracking State!
+                    hideAlert();
+                    document.body.className = 'state-tracking';
+                    
+                    isTracking = true;
+                    startTime = Date.now();
+                    clockInterval = setInterval(updateClock, 1000);
+                    
+                    let displayMat = warpedFrame.clone();
+                    cv.circle(displayMat, centerPoint, Math.round(bestBlackRadius > 0 ? bestBlackRadius : circles.data32F[2]), [0, 255, 0, 255], 2); 
+                    cv.circle(displayMat, centerPoint, 2, [255, 0, 0, 255], 3);
+                    
+                    cv.warpPerspective(displayMat, frame, perspectiveTransform, new cv.Size(video.videoWidth, video.videoHeight), cv.INTER_LINEAR | cv.WARP_INVERSE_MAP);
+                    cv.imshow('cv-canvas', frame);
+                    
+                    binaryBlack.delete(); blackContours.delete(); blackHierarchy.delete(); displayMat.delete();
+                } else {
+                    showAlert("Error Target Rings not detected.\nRe-align and retry.", 3000);
+                    btnStart.disabled = false;
+                    btnStart.textContent = "Start";
+                }
+                
+                frame.delete(); gray.delete(); thresh.delete(); hierarchy.delete(); contours.delete();
+                srcTri.delete(); dstTri.delete(); warpedFrame.delete(); warpedGray.delete(); circles.delete();
+            } catch (err) {
+                console.error(err);
+                showAlert("Processing Error.\nTry again.", 3000);
+                btnStart.disabled = false;
+                btnStart.textContent = "Start";
+            }
+        }
+
+        function detectShot() {
+            if(!isTracking || !baselineMat) return;
+            
+            try {
+                let cap = new cv.VideoCapture(video);
+                let frame = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+                cap.read(frame);
+                
+                let warpedFrame = new cv.Mat();
+                cv.warpPerspective(frame, warpedFrame, perspectiveTransform, new cv.Size(warpedWidth, warpedHeight));
+                
+                let warpedGray = new cv.Mat();
+                cv.cvtColor(warpedFrame, warpedGray, cv.COLOR_RGBA2GRAY);
+                cv.GaussianBlur(warpedGray, warpedGray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+                
+                let diff = new cv.Mat();
+                cv.absdiff(warpedGray, baselineMat, diff);
+                
+                let thresh = new cv.Mat();
+                cv.threshold(diff, thresh, 40, 255, cv.THRESH_BINARY);
+                
+                let kernel = cv.Mat.ones(3, 3, cv.CV_8U);
+                cv.erode(thresh, thresh, kernel);
+                cv.dilate(thresh, thresh, kernel);
+                
+                let contours = new cv.MatVector();
+                let hierarchy = new cv.Mat();
+                cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                
+                let shotDetected = false;
+                let expectedPxDiameter = 4.5 * pxPerMm;
+                let expectedArea = Math.PI * Math.pow(expectedPxDiameter / 2, 2);
+                let minHoleArea = expectedArea * 0.4;
+                let maxHoleArea = expectedArea * 2.5;
+                
+                let displayMat = warpedFrame.clone();
+                
+                for (let i = 0; i < contours.size(); ++i) {
+                    let cnt = contours.get(i);
+                    let area = cv.contourArea(cnt);
+                    
+                    if (area > minHoleArea && area < maxHoleArea) {
+                        shotDetected = true;
+                        
+                        let M = cv.moments(cnt);
+                        let bulletCenterX = M.m10 / M.m00;
+                        let bulletCenterY = M.m01 / M.m00;
+                        
+                        let distancePx = Math.hypot(bulletCenterX - centerPoint.x, bulletCenterY - centerPoint.y);
+                        let distanceMm = distancePx / pxPerMm;
+                        
+                        let score = calculateScore(distanceMm);
+                        registerShot(score);
+                        
+                        cv.drawContours(displayMat, contours, i, [255, 51, 102, 255], 2);
+                        cv.circle(displayMat, new cv.Point(bulletCenterX, bulletCenterY), 3, [0, 255, 0, 255], -1);
+                        cv.line(displayMat, centerPoint, new cv.Point(bulletCenterX, bulletCenterY), [0, 255, 0, 255], 1);
+                        
+                        warpedGray.copyTo(baselineMat); // Update baseline
+                        break; 
+                    }
+                    cnt.delete();
+                }
+                
+                if(!shotDetected) {
+                   showAlert("No Change\nDetected", 1500);
+                }
+                
+                let outFrame = new cv.Mat();
+                outFrame = cv.Mat.zeros(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+                cv.warpPerspective(displayMat, outFrame, perspectiveTransform, new cv.Size(video.videoWidth, video.videoHeight), cv.INTER_LINEAR | cv.WARP_INVERSE_MAP);
+                
+                let ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                cv.imshow('cv-canvas', outFrame);
+                
+                frame.delete(); warpedFrame.delete(); warpedGray.delete(); diff.delete(); thresh.delete(); 
+                kernel.delete(); contours.delete(); hierarchy.delete(); displayMat.delete(); outFrame.delete();
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        function calculateScore(distanceMm) {
+            if (distanceMm <= 2.50) return 10;
+            if (distanceMm <= 5.00) return 9;
+            if (distanceMm <= 7.50) return 8;
+            if (distanceMm <= 10.00) return 7;
+            if (distanceMm <= 12.50) return 6;
+            if (distanceMm <= 15.00) return 5;
+            if (distanceMm <= 17.50) return 4;
+            if (distanceMm <= 20.00) return 3;
+            if (distanceMm <= 22.50) return 2;
+            if (distanceMm <= 25.00) return 1;
+            return 0;
+        }
+
+        function registerShot(score) {
+            let elapsedSec = Math.floor((Date.now() - startTime) / 1000);
+            let mins = Math.floor(elapsedSec / 60);
+            let secs = elapsedSec % 60;
+            let timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+            
+            shots.push({ score, time: timeStr });
+            totalScore += score;
+            
+            let tr = document.createElement('tr');
+            tr.innerHTML = `<td>${shots.length}</td><td>${timeStr}</td><td>${score}</td>`;
+            scoreBody.appendChild(tr);
+            
+            totalShotsEl.textContent = shots.length;
+            totalScoreEl.textContent = totalScore;
+            
+            showAlert("Score\nUpdate!", 2000);
+            scoreBody.parentElement.parentElement.scrollTop = scoreBody.parentElement.parentElement.scrollHeight;
+        }
+
+        btnReset.addEventListener('click', () => {
+            document.body.className = 'state-setup';
+            isTracking = false;
+            if(clockInterval) clearInterval(clockInterval);
+            
+            btnStart.disabled = false;
+            btnStart.textContent = "Start";
+            
+            shots = [];
+            totalScore = 0;
+            scoreBody.innerHTML = '';
+            totalShotsEl.textContent = '0';
+            totalScoreEl.textContent = '0';
+            clockDisplayEl.textContent = '0:00';
+            
+            let ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        });
+        
+        btnEnd.addEventListener('click', () => {
+            if(clockInterval) clearInterval(clockInterval);
+            isTracking = false;
+            releaseWakeLock();
+            showAlert("Session Ended", 0);
+            btnTrack.disabled = true;
+        });
+
+    </script>
+</body>
+</html>
