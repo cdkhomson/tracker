@@ -134,6 +134,23 @@
         .summary-stat span { display: block; font-size: 60px; font-weight: bold; color: white; margin-top: 5px; line-height: 1; }
         #btn-new-session { margin-top: 30px; padding: 18px 40px; font-size: 18px; max-width: 300px; width: 100%; }
 
+        /* Camera Controls */
+        #camera-controls {
+            position: absolute; bottom: 30px; left: 0; width: 100%; z-index: 10;
+            display: flex; flex-direction: column; align-items: center; gap: 12px;
+        }
+        body.state-tracking #camera-controls { display: none; }
+        
+        #camera-select {
+            padding: 10px 15px; border-radius: 8px; border: none; background: rgba(0,0,0,0.6); 
+            color: white; font-size: 16px; max-width: 80%; outline: none; text-align: center;
+        }
+        .zoom-container {
+            display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.6); 
+            padding: 10px 20px; border-radius: 20px; width: 70%; max-width: 300px;
+        }
+        .zoom-container input { flex: 1; }
+
         /* Loading Screen */
         #loading-screen { position: fixed; inset: 0; background: var(--bg-color); z-index: 100; display: flex; justify-content: center; align-items: center; flex-direction: column; }
         .spinner { border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid var(--accent); border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 20px; }
@@ -169,6 +186,14 @@
             <div id="target-guide-inner"></div>
         </div>
         
+        <div id="camera-controls">
+            <div class="zoom-container" id="zoom-container" style="display: none;">
+                <label for="zoom-slider">🔍</label>
+                <input type="range" id="zoom-slider" min="1" max="1" step="0.1" value="1">
+            </div>
+            <select id="camera-select"><option>Loading Cameras...</option></select>
+        </div>
+
         <div id="center-alert"></div>
     </div>
 
@@ -240,6 +265,28 @@
         const clockDisplayEl = document.getElementById('clock-display');
         
         const centerAlert = document.getElementById('center-alert');
+        
+        let currentStream = null;
+        let videoDevices = [];
+        let currentDeviceId = null;
+        const cameraSelect = document.getElementById('camera-select');
+        const zoomSlider = document.getElementById('zoom-slider');
+        const zoomContainer = document.getElementById('zoom-container');
+
+        cameraSelect.addEventListener('change', (e) => {
+            currentDeviceId = e.target.value;
+            startCamera(currentDeviceId);
+        });
+
+        zoomSlider.addEventListener('input', async (e) => {
+            if(!currentStream) return;
+            const track = currentStream.getVideoTracks()[0];
+            if(track.getCapabilities && track.getCapabilities().zoom) {
+                try {
+                    await track.applyConstraints({ advanced: [{ zoom: parseFloat(e.target.value) }] });
+                } catch(err) {}
+            }
+        });
 
         function showAlert(msg, duration = 2000) {
             centerAlert.innerHTML = msg.replace(/\n/g, '<br>');
@@ -274,27 +321,67 @@
             startCamera();
         }
 
-        function startCamera() {
-            let constraints = { 
-                video: { 
-                    facingMode: 'environment', 
-                    width: { ideal: 1920 }, 
-                    height: { ideal: 1080 } 
-                }, 
-                audio: false 
-            };
+        async function getCameras() {
+            try {
+                let devices = await navigator.mediaDevices.enumerateDevices();
+                videoDevices = devices.filter(d => d.kind === 'videoinput');
+                
+                cameraSelect.innerHTML = '';
+                videoDevices.forEach((device, index) => {
+                    let option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `Camera ${index + 1}`;
+                    cameraSelect.appendChild(option);
+                });
+                if (currentDeviceId) cameraSelect.value = currentDeviceId;
+            } catch (err) { console.error("Error enumerating devices:", err); }
+        }
+
+        function startCamera(deviceId = null) {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+
+            let constraints = { video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false };
+            if (deviceId) {
+                constraints.video.deviceId = { exact: deviceId };
+            } else {
+                constraints.video.facingMode = 'environment';
+            }
+
             navigator.mediaDevices.getUserMedia(constraints)
-                .then(function(stream) {
+                .then(async function(stream) {
+                    currentStream = stream;
                     video.srcObject = stream;
                     video.play();
                     
+                    const track = stream.getVideoTracks()[0];
+                    if (track.getCapabilities) {
+                        const capabilities = track.getCapabilities();
+                        if (capabilities.zoom) {
+                            zoomSlider.min = capabilities.zoom.min;
+                            zoomSlider.max = capabilities.zoom.max;
+                            zoomSlider.step = capabilities.zoom.step;
+                            const settings = track.getSettings();
+                            zoomSlider.value = settings.zoom || capabilities.zoom.min;
+                            zoomContainer.style.display = 'flex';
+                        } else {
+                            zoomContainer.style.display = 'none';
+                        }
+                    }
+
+                    if (videoDevices.length === 0 || (videoDevices[0] && videoDevices[0].label === "")) {
+                        await getCameras();
+                        if (!deviceId && videoDevices.length > 0) {
+                            currentDeviceId = track.getSettings().deviceId;
+                            cameraSelect.value = currentDeviceId;
+                        }
+                    }
+                    
                     video.onplaying = () => {
-                        // Allow Safari a moment to correctly populate videoWidth/Height after playing starts
                         setTimeout(() => {
                             if (video.videoWidth > 0) {
                                 streaming = true;
-                                // CRITICAL BUGFIX: Bind the DOM element width/height explicitly so OpenCV.js 
-                                // VideoCapture internal canvas matches the frame size, avoiding "bad size" errors.
                                 video.width = video.videoWidth;
                                 video.height = video.videoHeight;
                                 canvas.width = video.videoWidth;
