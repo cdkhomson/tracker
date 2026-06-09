@@ -114,6 +114,26 @@
         button:disabled { background: #888; cursor: not-allowed; opacity: 1; }
         #btn-start { max-width: 250px; } 
 
+        /* Summary Screen */
+        body.state-summary #video-area, 
+        body.state-summary #dashboard-area, 
+        body.state-summary #controls-tracking,
+        body.state-summary #controls-setup,
+        body.state-summary #setup-header { display: none !important; }
+        
+        body.state-summary #summary-screen { display: flex; }
+        body:not(.state-summary) #summary-screen { display: none; }
+
+        #summary-screen {
+            flex: 1; flex-direction: column; justify-content: center; align-items: center;
+            background: var(--bg-color); padding: 20px; text-align: center;
+            height: 100vh; overflow: hidden;
+        }
+        #summary-screen h2 { color: var(--accent); font-size: 32px; margin-bottom: 40px; margin-top: 0; }
+        .summary-stat { margin-bottom: 25px; font-size: 18px; color: #DDD; text-transform: uppercase; letter-spacing: 1px; }
+        .summary-stat span { display: block; font-size: 60px; font-weight: bold; color: white; margin-top: 5px; line-height: 1; }
+        #btn-new-session { margin-top: 30px; padding: 18px 40px; font-size: 18px; max-width: 300px; width: 100%; }
+
         /* Loading Screen */
         #loading-screen { position: fixed; inset: 0; background: var(--bg-color); z-index: 100; display: flex; justify-content: center; align-items: center; flex-direction: column; }
         .spinner { border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid var(--accent); border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 20px; }
@@ -124,6 +144,15 @@
     <div id="loading-screen">
         <div class="spinner"></div>
         <div style="font-weight:bold; font-size: 18px;">Initializing Engine...</div>
+    </div>
+
+    <!-- Summary Screen -->
+    <div id="summary-screen">
+        <h2>Session Complete</h2>
+        <div class="summary-stat">Total Score<span id="sum-score">0</span></div>
+        <div class="summary-stat">Total Shots<span id="sum-shots">0</span></div>
+        <div class="summary-stat">Time Elapsed<span id="sum-time">0:00</span></div>
+        <button id="btn-new-session">Start New Session</button>
     </div>
 
     <div id="setup-header">
@@ -632,8 +661,7 @@
         });
         
         btnEnd.addEventListener('click', () => {
-            if (confirm("End session and clear all scores?")) {
-                document.body.className = 'state-setup';
+            if (confirm("End this session and view summary?")) {
                 isTracking = false;
                 if(clockInterval) {
                     clearInterval(clockInterval);
@@ -641,21 +669,33 @@
                 }
                 releaseWakeLock();
                 
-                btnStart.disabled = false;
-                btnStart.textContent = "Start";
+                // Populate Summary
+                document.getElementById('sum-score').textContent = totalScore;
+                document.getElementById('sum-shots').textContent = shots.length;
+                document.getElementById('sum-time').textContent = clockDisplayEl.textContent;
                 
-                shots = [];
-                totalScore = 0;
-                scoreBody.innerHTML = '';
-                totalShotsEl.textContent = '0';
-                totalScoreEl.textContent = '0';
-                clockDisplayEl.textContent = '0:00';
-                startTime = null;
+                // Switch State
+                document.body.className = 'state-summary';
                 
                 let ctx = canvas.getContext('2d');
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 hideAlert();
             }
+        });
+
+        document.getElementById('btn-new-session').addEventListener('click', () => {
+            document.body.className = 'state-setup';
+            
+            btnStart.disabled = false;
+            btnStart.textContent = "Start";
+            
+            shots = [];
+            totalScore = 0;
+            scoreBody.innerHTML = '';
+            totalShotsEl.textContent = '0';
+            totalScoreEl.textContent = '0';
+            clockDisplayEl.textContent = '0:00';
+            startTime = null;
         });
 
     </script>
