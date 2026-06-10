@@ -822,7 +822,16 @@
                         if (!isOverlap) {
                             // CLEAN STANDALONE HOLE: Drastically relaxed constraints to ensure no visible shot is missed
                             if (area > minCleanHoleArea && aspectRatio > 0.15 && aspectRatio < 5.0 && circularity > 0.15) {
-                                isValidShot = true;
+                                // Reject metal prongs and edge shadows using rotated bounding box aspect ratio
+                                let rotatedRect = cv.minAreaRect(cnt);
+                                let rw = rotatedRect.size.width;
+                                let rh = rotatedRect.size.height;
+                                if (rw > 0 && rh > 0) {
+                                    let rotatedRatio = Math.max(rw, rh) / Math.min(rw, rh);
+                                    if (rotatedRatio < 2.5) {
+                                        isValidShot = true;
+                                    }
+                                }
                             }
                         } else {
                             // OVERLAPPING HOLE: Area is allowed to be a tiny sliver (8%), shape can be weird.
