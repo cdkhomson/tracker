@@ -733,11 +733,16 @@
                     cnt.delete();
                 }
                 
+                let isTargetReeling = false;
                 if (newCenter) {
                     let dx = centerPoint.x - newCenter.x;
                     let dy = centerPoint.y - newCenter.y;
                     
-                    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+                    // If the bullseye shifts by more than 15% of the frame, it's not camera sway. 
+                    // The user is actively reeling the target in on a pulley system!
+                    if (Math.abs(dx) > warpedWidth * 0.15 || Math.abs(dy) > warpedHeight * 0.15) {
+                        isTargetReeling = true;
+                    } else if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
                         let M_translate = cv.matFromArray(2, 3, cv.CV_64F, [1, 0, dx, 0, 1, dy]);
                         cv.warpAffine(warpedGray, warpedGray, M_translate, warpedGray.size(), cv.INTER_LINEAR, cv.BORDER_REPLICATE, new cv.Scalar());
                         M_translate.delete();
@@ -746,8 +751,36 @@
                         cv.warpAffine(warpedFrame, warpedFrame, M_translate_color, warpedFrame.size(), cv.INTER_LINEAR, cv.BORDER_REPLICATE, new cv.Scalar());
                         M_translate_color.delete();
                     }
+                } else {
+                    // Bullseye completely missing (Target removed or paper swapped)
+                    isTargetReeling = true;
                 }
+                
                 binaryBlack.delete(); morphKernel.delete(); blackContours.delete(); blackHierarchy.delete();
+                
+                if (isTargetReeling) {
+                    // Render the live feed but abort detection so we don't track bullet marks on the steel plate!
+                    let displayMat = warpedFrame.clone();
+                    cv.circle(displayMat, centerPoint, 3, [255, 255, 255, 255], -1); 
+                    let bulletRadiusPx = Math.round(2.25 * pxPerMm);
+                    for (let i = 0; i < shotsPx.length; i++) {
+                        let pt = shotsPx[i];
+                        let isRecent = (i === shotsPx.length - 1);
+                        let color = isRecent ? [255, 0, 0, 255] : [255, 255, 255, 255]; 
+                        cv.circle(displayMat, new cv.Point(pt.x, pt.y), bulletRadiusPx, color, isRecent ? 3 : 2);
+                        cv.circle(displayMat, new cv.Point(pt.x, pt.y), 2, color, -1);
+                    }
+                    
+                    let outFrame = cv.Mat.zeros(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+                    cv.warpPerspective(displayMat, outFrame, perspectiveTransform, new cv.Size(video.videoWidth, video.videoHeight), cv.INTER_LINEAR | cv.WARP_INVERSE_MAP);
+                    
+                    let ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    cv.imshow('cv-canvas', outFrame);
+                    
+                    frame.delete(); warpedFrame.delete(); warpedGray.delete(); displayMat.delete(); outFrame.delete();
+                    return;
+                }
                 // --- END AUTO-ALIGNMENT ---
                 
                 let diff = new cv.Mat();
@@ -755,6 +788,39 @@
                 
                 let thresh = new cv.Mat();
                 cv.threshold(diff, thresh, 25, 255, cv.THRESH_BINARY);
+                
+                let expectedPxDiameter = 4.5 * pxPerMm;
+                let expectedArea = Math.PI * Math.pow(expectedPxDiameter / 2, 2);
+                
+                // --- SEISMIC STABILITY SENSOR ---
+                // If the camera is touched or shaken, motion blur and massive parallax will cause thousands
+                // of pixels to register as "changed". A real bullet hole is tiny.
+                // If the total changed area exceeds 25 bullet holes, the camera is shaking or a hand is in the way!
+                let totalChangedPixels = cv.countNonZero(thresh);
+                if (totalChangedPixels > expectedArea * 25) {
+                    // Render the live feed but abort the detection logic so we don't register false positives!
+                    let displayMat = warpedFrame.clone();
+                    cv.circle(displayMat, centerPoint, 3, [255, 255, 255, 255], -1); 
+                    let bulletRadiusPx = Math.round(2.25 * pxPerMm);
+                    for (let i = 0; i < shotsPx.length; i++) {
+                        let pt = shotsPx[i];
+                        let isRecent = (i === shotsPx.length - 1);
+                        let color = isRecent ? [255, 0, 0, 255] : [255, 255, 255, 255]; 
+                        cv.circle(displayMat, new cv.Point(pt.x, pt.y), bulletRadiusPx, color, isRecent ? 3 : 2);
+                        cv.circle(displayMat, new cv.Point(pt.x, pt.y), 2, color, -1);
+                    }
+                    
+                    let outFrame = cv.Mat.zeros(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+                    cv.warpPerspective(displayMat, outFrame, perspectiveTransform, new cv.Size(video.videoWidth, video.videoHeight), cv.INTER_LINEAR | cv.WARP_INVERSE_MAP);
+                    
+                    let ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    cv.imshow('cv-canvas', outFrame);
+                    
+                    frame.delete(); warpedFrame.delete(); warpedGray.delete(); diff.delete(); thresh.delete(); 
+                    displayMat.delete(); outFrame.delete();
+                    return; // Wait for camera to settle down
+                }
                 
                 let kernel = cv.Mat.ones(3, 3, cv.CV_8U);
                 cv.erode(thresh, thresh, kernel);
@@ -767,7 +833,7 @@
                 let expectedPxDiameter = 4.5 * pxPerMm;
                 let expectedArea = Math.PI * Math.pow(expectedPxDiameter / 2, 2);
                 let minCleanHoleArea = expectedArea * 0.25; // Drastically lowered from 0.6 to catch partial/dark holes
-                let minOverlapArea = expectedArea * 0.08; // 8% area detects overlaps down to 0.5mm
+                let minOverlapArea = expectedArea * 0.15; // Raised to 15% to become immune to wind vibration crescents
                 let maxHoleArea = expectedArea * 3.5;
                 
                 let displayMat = warpedFrame.clone();
@@ -784,6 +850,14 @@
                         if (maxDimension > expectedPxDiameter * 3.0) {
                             continue;
                         }
+                        
+                        // Reject micro-vibrations (wind flutter causing 1-3 pixel crescents on old holes)
+                        let rotatedRect = cv.minAreaRect(cnt);
+                        let minRotatedDim = Math.min(rotatedRect.size.width, rotatedRect.size.height);
+                        if (minRotatedDim / pxPerMm < 0.6) {
+                            continue;
+                        }
+                        
                         let aspectRatio = rect.width / rect.height;
                         
                         let perimeter = cv.arcLength(cnt, true);
