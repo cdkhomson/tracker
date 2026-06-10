@@ -778,6 +778,12 @@
                     
                     if (area > minOverlapArea && area < maxHoleArea) {
                         let rect = cv.boundingRect(cnt);
+                        
+                        // Reject long straight lines (paper edges, target holder prongs, background void edges)
+                        let maxDimension = Math.max(rect.width, rect.height);
+                        if (maxDimension > expectedPxDiameter * 3.0) {
+                            continue;
+                        }
                         let aspectRatio = rect.width / rect.height;
                         
                         let perimeter = cv.arcLength(cnt, true);
@@ -786,6 +792,15 @@
                         let M = cv.moments(cnt);
                         let bulletCenterX = M.m10 / M.m00;
                         let bulletCenterY = M.m01 / M.m00;
+                        
+                        // Reject hallucinatory shots outside the physical paper boundary.
+                        // The physical 170x170mm paper has an edge distance of 85mm. 
+                        // The lowest scoring 1-ring has a radius of 77.75mm. 
+                        // Anything past 82mm is impossible to score and is likely a background shadow or metal prong.
+                        let distFromTargetCenter = Math.hypot(bulletCenterX - centerPoint.x, bulletCenterY - centerPoint.y);
+                        if (distFromTargetCenter / pxPerMm > 82.0) {
+                            continue;
+                        }
                         
                         let isOverlap = false;
                         if (shotsPx.length > 0) {
@@ -887,9 +902,13 @@
                 // Draw all historical shots
                 cv.circle(displayMat, centerPoint, 3, [255, 255, 255, 255], -1); // White target center
                 let bulletRadiusPx = Math.round(2.25 * pxPerMm);
-                for (let pt of shotsPx) {
-                    cv.circle(displayMat, new cv.Point(pt.x, pt.y), bulletRadiusPx, [255, 255, 255, 255], 2);
-                    cv.circle(displayMat, new cv.Point(pt.x, pt.y), 1, [255, 255, 255, 255], -1);
+                for (let i = 0; i < shotsPx.length; i++) {
+                    let pt = shotsPx[i];
+                    let isRecent = (i === shotsPx.length - 1);
+                    let color = isRecent ? [255, 0, 0, 255] : [255, 255, 255, 255]; // Red for newest, White for historical
+                    
+                    cv.circle(displayMat, new cv.Point(pt.x, pt.y), bulletRadiusPx, color, isRecent ? 3 : 2);
+                    cv.circle(displayMat, new cv.Point(pt.x, pt.y), 2, color, -1);
                 }
                 
                 let outFrame = new cv.Mat();
@@ -948,7 +967,6 @@
             totalShotsEl.textContent = shots.length;
             totalScoreEl.textContent = totalScore;
             
-            showAlert("Score\nUpdate!", 2000);
             scoreBody.parentElement.parentElement.scrollTop = scoreBody.parentElement.parentElement.scrollHeight;
         }
 
