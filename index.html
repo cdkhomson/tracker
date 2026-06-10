@@ -751,8 +751,9 @@
                 
                 let expectedPxDiameter = 4.5 * pxPerMm;
                 let expectedArea = Math.PI * Math.pow(expectedPxDiameter / 2, 2);
-                let minHoleArea = expectedArea * 0.4;
-                let maxHoleArea = expectedArea * 2.5;
+                let minCleanHoleArea = expectedArea * 0.6;
+                let minOverlapArea = expectedArea * 0.08; // 8% area detects overlaps down to 0.5mm
+                let maxHoleArea = expectedArea * 3.5;
                 
                 let displayMat = warpedFrame.clone();
                 
@@ -760,18 +761,97 @@
                     let cnt = contours.get(i);
                     let area = cv.contourArea(cnt);
                     
-                    if (area > minHoleArea && area < maxHoleArea) {
+                    if (area > minOverlapArea && area < maxHoleArea) {
                         let rect = cv.boundingRect(cnt);
                         let aspectRatio = rect.width / rect.height;
                         
                         let perimeter = cv.arcLength(cnt, true);
                         let circularity = (4 * Math.PI * area) / (perimeter * perimeter);
                         
-                        // A bullet hole is highly circular. A crescent shift is very low circularity (< 0.2).
-                        if (aspectRatio > 0.3 && aspectRatio < 3.0 && circularity > 0.4) {
-                            let M = cv.moments(cnt);
-                            let bulletCenterX = M.m10 / M.m00;
-                            let bulletCenterY = M.m01 / M.m00;
+                        let M = cv.moments(cnt);
+                        let bulletCenterX = M.m10 / M.m00;
+                        let bulletCenterY = M.m01 / M.m00;
+                        
+                        let isOverlap = false;
+                        if (shotsPx.length > 0) {
+                            let minDist = Infinity;
+                            for (let pt of shotsPx) {
+                                let d = Math.hypot(bulletCenterX - pt.x, bulletCenterY - pt.y);
+                                if (d < minDist) {
+                                    minDist = d;
+                                }
+                            }
+                            if (minDist < expectedPxDiameter * 1.5) {
+                                isOverlap = true;
+                            }
+                        }
+                        
+                        let isValidShot = false;
+                        let needsReconstruction = false;
+                        
+                        if (!isOverlap) {
+                            // CLEAN STANDALONE HOLE: Must be large enough and look like a circle
+                            if (area > minCleanHoleArea && aspectRatio > 0.3 && aspectRatio < 3.0 && circularity > 0.4) {
+                                isValidShot = true;
+                            }
+                        } else {
+                            // OVERLAPPING HOLE: Area is allowed to be a tiny sliver (8%), shape can be weird.
+                            if (aspectRatio > 0.1 && aspectRatio < 10.0 && circularity > 0.05) {
+                                isValidShot = true;
+                                needsReconstruction = true;
+                            }
+                        }
+                        
+                        if (isValidShot) {
+                            if (needsReconstruction) {
+                                let bestCx = bulletCenterX;
+                                let bestCy = bulletCenterY;
+                                let maxVotes = 0;
+                                
+                                let expectedPxRadius = expectedPxDiameter / 2;
+                                let searchStartX = Math.floor(rect.x - expectedPxRadius);
+                                let searchEndX = Math.ceil(rect.x + rect.width + expectedPxRadius);
+                                let searchStartY = Math.floor(rect.y - expectedPxRadius);
+                                let searchEndY = Math.ceil(rect.y + rect.height + expectedPxRadius);
+                                
+                                let contourPts = [];
+                                for (let j = 0; j < cnt.rows; j += 2) {
+                                    contourPts.push({ x: cnt.data32S[j * 2], y: cnt.data32S[j * 2 + 1] });
+                                }
+                                
+                                let R = expectedPxRadius;
+                                let R_sq_min = (R - 1.5) * (R - 1.5);
+                                let R_sq_max = (R + 1.5) * (R + 1.5);
+                                
+                                for (let cy = searchStartY; cy <= searchEndY; cy++) {
+                                    for (let cx = searchStartX; cx <= searchEndX; cx++) {
+                                        let votes = 0;
+                                        for (let pt of contourPts) {
+                                            let dx = pt.x - cx;
+                                            let dy = pt.y - cy;
+                                            let d_sq = dx*dx + dy*dy;
+                                            if (d_sq >= R_sq_min && d_sq <= R_sq_max) {
+                                                votes++;
+                                            }
+                                        }
+                                        if (votes > maxVotes) {
+                                            maxVotes = votes;
+                                            bestCx = cx;
+                                            bestCy = cy;
+                                        }
+                                    }
+                                }
+                                
+                                // To accept a tiny sliver, it MUST pass mathematical arc consensus
+                                if (maxVotes > 5) {
+                                    bulletCenterX = bestCx;
+                                    bulletCenterY = bestCy;
+                                } else {
+                                    // It failed consensus, so it's just chaotic background noise/paper tear attached to the hole
+                                    cnt.delete();
+                                    continue; 
+                                }
+                            }
                             
                             let score = calculatePistolScore(centerPoint.x, centerPoint.y, bulletCenterX, bulletCenterY, pxPerMm);
                             registerShot(score);
