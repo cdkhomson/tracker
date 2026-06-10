@@ -830,8 +830,6 @@
                 let hierarchy = new cv.Mat();
                 cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
                 
-                let expectedPxDiameter = 4.5 * pxPerMm;
-                let expectedArea = Math.PI * Math.pow(expectedPxDiameter / 2, 2);
                 let minCleanHoleArea = expectedArea * 0.25; // Drastically lowered from 0.6 to catch partial/dark holes
                 let minOverlapArea = expectedArea * 0.15; // Raised to 15% to become immune to wind vibration crescents
                 let maxHoleArea = expectedArea * 3.5;
