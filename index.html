@@ -831,17 +831,24 @@
                 cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
                 
                 let minCleanHoleArea = expectedArea * 0.25; // Drastically lowered from 0.6 to catch partial/dark holes
-                let minOverlapArea = expectedArea * 0.15; // Raised to 15% to become immune to wind vibration crescents
                 let maxHoleArea = expectedArea * 3.5;
                 
                 let displayMat = warpedFrame.clone();
+                let blackRadiusPx = 29.75 * pxPerMm;
                 
                 for (let i = 0; i < contours.size(); ++i) {
                     let cnt = contours.get(i);
                     let area = cv.contourArea(cnt);
+                    let rect = cv.boundingRect(cnt);
                     
-                    if (area > minOverlapArea && area < maxHoleArea) {
-                        let rect = cv.boundingRect(cnt);
+                    // Dual-Zone Tracking: The black bullseye is a clean, controlled region.
+                    // We can safely drop thresholds inside it to achieve hyper-sensitivity for tight keyholes!
+                    let distToCenter = Math.hypot(rect.x + rect.width/2 - centerPoint.x, rect.y + rect.height/2 - centerPoint.y);
+                    let isInsideBlack = (distToCenter < blackRadiusPx);
+                    
+                    let dynamicMinOverlapArea = expectedArea * (isInsideBlack ? 0.04 : 0.15);
+                    
+                    if (area > dynamicMinOverlapArea && area < maxHoleArea) {
                         
                         // Reject long straight lines (paper edges, target holder prongs, background void edges)
                         let maxDimension = Math.max(rect.width, rect.height);
@@ -850,9 +857,12 @@
                         }
                         
                         // Reject micro-vibrations (wind flutter causing 1-3 pixel crescents on old holes)
+                        // Inside the black circle, we allow razor-thin slivers (0.3mm thick) for tight keyholes!
                         let rotatedRect = cv.minAreaRect(cnt);
                         let minRotatedDim = Math.min(rotatedRect.size.width, rotatedRect.size.height);
-                        if (minRotatedDim / pxPerMm < 0.6) {
+                        let minThicknessMm = isInsideBlack ? 0.30 : 0.60;
+                        
+                        if (minRotatedDim / pxPerMm < minThicknessMm) {
                             continue;
                         }
                         
