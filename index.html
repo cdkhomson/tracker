@@ -461,12 +461,25 @@
                 return;
             }
             btnStart.disabled = true;
-            btnStart.textContent = "Loading...";
-            showAlert("Loading...", 0);
             requestWakeLock();
             
-            // Allow UI to paint before blocking thread
-            setTimeout(captureBaseline, 100);
+            let countdown = 5;
+            btnStart.textContent = `Starting in ${countdown}...`;
+            showAlert(`Starting in ${countdown}...`, 0);
+            
+            let countdownInterval = setInterval(() => {
+                countdown--;
+                if (countdown > 0) {
+                    btnStart.textContent = `Starting in ${countdown}...`;
+                    showAlert(`Starting in ${countdown}...`, 0);
+                } else {
+                    clearInterval(countdownInterval);
+                    btnStart.textContent = "Loading...";
+                    showAlert("Loading...", 0);
+                    // Allow UI to paint before blocking thread
+                    setTimeout(captureBaseline, 100);
+                }
+            }, 1000);
         });
 
         function detectShotLoop() {
@@ -697,20 +710,22 @@
                 cv.findContours(binaryBlack, blackContours, blackHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
                 
                 let newCenter = null;
-                let minDistanceToCenter = Infinity;
+                let maxArea = 0;
                 let imgCenterX = warpedWidth / 2;
                 let imgCenterY = warpedHeight / 2;
                 
                 for (let i = 0; i < blackContours.size(); ++i) {
                     let cnt = blackContours.get(i);
                     let area = cv.contourArea(cnt);
-                    if (area > 1000) {
+                    
+                    if (area > 5000) {
                         let circle = cv.minEnclosingCircle(cnt);
-                        let circleArea = Math.PI * circle.radius * circle.radius;
-                        if (area / circleArea > 0.5) {
-                            let dist = Math.hypot(circle.center.x - imgCenterX, circle.center.y - imgCenterY);
-                            if (dist < warpedWidth * 0.4 && dist < minDistanceToCenter) {
-                                minDistanceToCenter = dist;
+                        let dist = Math.hypot(circle.center.x - imgCenterX, circle.center.y - imgCenterY);
+                        
+                        // Pick the largest central object, ignoring 'circularity' because the bullseye might be chewed up!
+                        if (dist < warpedWidth * 0.4) {
+                            if (area > maxArea) {
+                                maxArea = area;
                                 newCenter = circle.center;
                             }
                         }
@@ -739,7 +754,7 @@
                 cv.absdiff(warpedGray, baselineMat, diff);
                 
                 let thresh = new cv.Mat();
-                cv.threshold(diff, thresh, 40, 255, cv.THRESH_BINARY);
+                cv.threshold(diff, thresh, 25, 255, cv.THRESH_BINARY);
                 
                 let kernel = cv.Mat.ones(3, 3, cv.CV_8U);
                 cv.erode(thresh, thresh, kernel);
@@ -751,7 +766,7 @@
                 
                 let expectedPxDiameter = 4.5 * pxPerMm;
                 let expectedArea = Math.PI * Math.pow(expectedPxDiameter / 2, 2);
-                let minCleanHoleArea = expectedArea * 0.6;
+                let minCleanHoleArea = expectedArea * 0.25; // Drastically lowered from 0.6 to catch partial/dark holes
                 let minOverlapArea = expectedArea * 0.08; // 8% area detects overlaps down to 0.5mm
                 let maxHoleArea = expectedArea * 3.5;
                 
@@ -790,8 +805,8 @@
                         let needsReconstruction = false;
                         
                         if (!isOverlap) {
-                            // CLEAN STANDALONE HOLE: Must be large enough and look like a circle
-                            if (area > minCleanHoleArea && aspectRatio > 0.3 && aspectRatio < 3.0 && circularity > 0.4) {
+                            // CLEAN STANDALONE HOLE: Drastically relaxed constraints to ensure no visible shot is missed
+                            if (area > minCleanHoleArea && aspectRatio > 0.15 && aspectRatio < 5.0 && circularity > 0.15) {
                                 isValidShot = true;
                             }
                         } else {
@@ -842,8 +857,12 @@
                                     }
                                 }
                                 
+                                // The threshold dynamically scales based on pixelsPerMm. 
+                                // We require 15% of a true 4.5mm pellet circumference.
+                                let requiredVotes = Math.max(4, Math.floor(0.15 * Math.PI * R));
+                                
                                 // To accept a tiny sliver, it MUST pass mathematical arc consensus
-                                if (maxVotes > 5) {
+                                if (maxVotes > requiredVotes) {
                                     bulletCenterX = bestCx;
                                     bulletCenterY = bestCy;
                                 } else {
