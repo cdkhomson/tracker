@@ -1111,8 +1111,8 @@
                                 }
                                 
                                 // The threshold dynamically scales based on pixelsPerMm. 
-                                // We require 8% of a true 4.5mm pellet circumference.
-                                let requiredVotes = Math.max(3, Math.floor(0.08 * Math.PI * R));
+                                // We require 15% of a true 4.5mm pellet circumference.
+                                let requiredVotes = Math.max(4, Math.floor(0.15 * Math.PI * R));
                                 
                                 // To accept a tiny sliver, it MUST pass mathematical arc consensus
                                 if (maxVotes > requiredVotes) {
