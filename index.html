@@ -752,7 +752,8 @@
                                 if (dist < minDistanceToCenter) {
                                     minDistanceToCenter = dist;
                                     bestBlackRadius = circle.radius;
-                                    foundCenter = circle.center;
+                                    let M = cv.moments(cnt);
+                                    foundCenter = { x: M.m10 / M.m00, y: M.m01 / M.m00 };
                                 }
                             }
                         }
@@ -848,7 +849,8 @@
                         if (dist < warpedWidth * 0.4) {
                             if (area > maxArea) {
                                 maxArea = area;
-                                newCenter = circle.center;
+                                let M = cv.moments(cnt);
+                                newCenter = { x: M.m10 / M.m00, y: M.m01 / M.m00 };
                             }
                         }
                     }
@@ -1018,6 +1020,13 @@
                                     minDist = d;
                                 }
                             }
+                            
+                            // Reject sway artifacts: if the changed area is perfectly centered on an old hole (< 1.25mm), it's a jittering old hole!
+                            // Real overlapping shots have their changed area offset by at least half the pellet radius (> 2mm).
+                            if (minDist < expectedPxDiameter * 0.28) {
+                                continue;
+                            }
+                            
                             if (minDist < expectedPxDiameter * 1.5) {
                                 isOverlap = true;
                             }
