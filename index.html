@@ -1059,6 +1059,7 @@
                                     let rotatedRatio = Math.max(rw, rh) / Math.min(rw, rh);
                                     if (rotatedRatio < 2.5) {
                                         isValidShot = true;
+                                        needsReconstruction = true; // FORCE ARC CONSENSUS to reject printed lines/numbers
                                     }
                                 }
                             }
