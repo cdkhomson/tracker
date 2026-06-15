@@ -912,7 +912,18 @@
                 cv.absdiff(warpedGray, baselineMat, diff);
                 
                 let thresh = new cv.Mat();
+                // 1. Threshold for the white paper (robust against lighting noise)
                 cv.threshold(diff, thresh, 25, 255, cv.THRESH_BINARY);
+                
+                // 2. Threshold for the black bullseye (extremely low contrast between dark hole and black ink)
+                let threshBlack = new cv.Mat();
+                cv.threshold(diff, threshBlack, 10, 255, cv.THRESH_BINARY);
+                
+                // 3. Combine them using a circular mask covering the black bullseye
+                let blackMask = cv.Mat.zeros(diff.rows, diff.cols, cv.CV_8UC1);
+                cv.circle(blackMask, centerPoint, Math.round(29.75 * pxPerMm), [255, 255, 255, 255], -1);
+                threshBlack.copyTo(thresh, blackMask);
+                threshBlack.delete(); blackMask.delete();
                 
                 let expectedPxDiameter = 4.5 * pxPerMm;
                 let expectedArea = Math.PI * Math.pow(expectedPxDiameter / 2, 2);
