@@ -1084,13 +1084,14 @@
                                 let searchEndY = Math.ceil(rect.y + rect.height + expectedPxRadius);
                                 
                                 let contourPts = [];
-                                for (let j = 0; j < cnt.rows; j += 2) {
+                                for (let j = 0; j < cnt.rows; j += 1) { // FIXED: scan all pixels
                                     contourPts.push({ x: cnt.data32S[j * 2], y: cnt.data32S[j * 2 + 1] });
                                 }
                                 
                                 let R = expectedPxRadius;
-                                let R_sq_min = (R - 1.5) * (R - 1.5);
-                                let R_sq_max = (R + 1.5) * (R + 1.5);
+                                // Tighten tolerance to 1.0 pixel to strictly filter out lines at low resolutions
+                                let R_sq_min = (R - 1.0) * (R - 1.0);
+                                let R_sq_max = (R + 1.0) * (R + 1.0);
                                 
                                 for (let cy = searchStartY; cy <= searchEndY; cy++) {
                                     for (let cx = searchStartX; cx <= searchEndX; cx++) {
@@ -1111,14 +1112,34 @@
                                     }
                                 }
                                 
-                                // The threshold dynamically scales based on pixelsPerMm. 
-                                // We require 15% of a true 4.5mm pellet circumference.
-                                let requiredVotes = Math.max(4, Math.floor(0.15 * Math.PI * R));
+                                // We require 20% of the mathematical circumference to perfectly match the contour!
+                                let requiredVotes = Math.max(8, Math.floor(0.20 * 2 * Math.PI * R));
                                 
                                 // To accept a tiny sliver, it MUST pass mathematical arc consensus
                                 if (maxVotes > requiredVotes) {
-                                    bulletCenterX = bestCx;
-                                    bulletCenterY = bestCy;
+                                    // RE-EVALUATE DISTANCE AFTER RECONSTRUCTION!
+                                    // If an old hole shifted, its arc perfectly matches a bullet hole, but the mathematically reconstructed 
+                                    // center will land EXACTLY on the old hole's original center!
+                                    let isSwayArtifact = false;
+                                    if (shotsPx.length > 0) {
+                                        for (let pt of shotsPx) {
+                                            if(pt.isBlank) continue;
+                                            let finalDist = Math.hypot(bestCx - pt.x, bestCy - pt.y);
+                                            // A genuine new bullet must physically offset by at least 1/3rd of a pellet diameter (~1.5mm)
+                                            if (finalDist < expectedPxDiameter * 0.35) {
+                                                isSwayArtifact = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    
+                                    if (isSwayArtifact) {
+                                        cnt.delete();
+                                        continue; // Reject shifted old hole!
+                                    } else {
+                                        bulletCenterX = bestCx;
+                                        bulletCenterY = bestCy;
+                                    }
                                 } else {
                                     // It failed consensus, so it's just chaotic background noise/paper tear attached to the hole
                                     cnt.delete();
